@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PHP Budget Tracker - Ate Tine</title>
+    <title id="pageBrowserTitle">PHP Budget Tracker - Ate Tine</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js -->
@@ -14,7 +14,7 @@
 
     <!-- Top Header -->
     <header class="bg-indigo-600 text-white p-4 shadow-md sticky top-0 z-50 flex justify-between items-center">
-        <h1 class="text-lg font-bold">PHP Budget Tracker</h1>
+        <h1 id="headerTitleText" class="text-lg font-bold">PHP Budget Tracker</h1>
         <div class="flex space-x-2">
             <button onclick="exportToExcelWithCharts()" class="bg-indigo-700 px-2.5 py-1 rounded text-xs hover:bg-indigo-800" title="Export Excel with Charts & Data">
                 <i class="fas fa-file-excel mr-1"></i> Export Excel (Charts & Data)
@@ -197,6 +197,16 @@
         <div id="tab-settings" class="tab-content hidden space-y-4">
             <h2 class="text-xl font-bold text-gray-800">Settings & Data Management</h2>
             
+            <!-- Rename Page Title Section -->
+            <div class="bg-white p-4 rounded-xl shadow space-y-3">
+                <h3 class="font-bold text-gray-700 text-sm">Rename Page Title</h3>
+                <p class="text-xs text-gray-500">Change the title displayed on the header and browser tab.</p>
+                <div class="flex space-x-2">
+                    <input type="text" id="appTitleInput" placeholder="Enter new title..." class="border p-2 rounded flex-1 text-sm">
+                    <button onclick="updateAppTitle()" class="bg-indigo-600 text-white px-4 py-2 rounded text-sm">Save Title</button>
+                </div>
+            </div>
+
             <div class="bg-white p-4 rounded-xl shadow space-y-3">
                 <h3 class="font-bold text-gray-700 text-sm">Cross-Device Data Backup</h3>
                 <p class="text-xs text-gray-500">Download your data file to move it to another device, or restore a previously saved backup file.</p>
@@ -366,7 +376,8 @@
 
     <!-- Script Application Logic -->
     <script>
-        let data = JSON.parse(localStorage.getItem('budgetAppV16')) || {
+        let data = JSON.parse(localStorage.getItem('budgetAppV17')) || {
+            appTitle: "PHP Budget Tracker",
             transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS']
         };
 
@@ -375,13 +386,33 @@
         }
 
         function saveData() {
-            localStorage.setItem('budgetAppV16', JSON.stringify(data));
+            localStorage.setItem('budgetAppV17', JSON.stringify(data));
             renderAll();
+        }
+
+        function applyAppTitle() {
+            const title = data.appTitle || "PHP Budget Tracker";
+            document.getElementById('headerTitleText').innerText = title;
+            document.getElementById('pageBrowserTitle').innerText = title;
+            const input = document.getElementById('appTitleInput');
+            if(input && input.value !== title) {
+                input.value = title;
+            }
+        }
+
+        function updateAppTitle() {
+            const inputVal = document.getElementById('appTitleInput').value.trim();
+            if(inputVal) {
+                data.appTitle = inputVal;
+                saveData();
+                applyAppTitle();
+                alert("App title updated successfully!");
+            }
         }
 
         function clearAllData() {
             if(confirm("Are you sure you want to clear all your budget data? This action cannot be undone.")) {
-                data = { transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS'] };
+                data = { appTitle: data.appTitle || "PHP Budget Tracker", transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS'] };
                 saveData();
                 alert("All data has been cleared.");
             }
@@ -660,6 +691,7 @@
                     if(importedData && importedData.transactions) {
                         data = importedData;
                         saveData();
+                        applyAppTitle();
                         alert("Data successfully restored from backup file!");
                     } else {
                         alert("Invalid backup file format.");
@@ -719,6 +751,7 @@
         }
 
         function exportToExcelWithCharts() {
+            const appName = data.appTitle || "PHP Budget Tracker";
             const ieImg = charts['budgetIEChart'] ? charts['budgetIEChart'].toBase64Image() : '';
             const loanImg = charts['budgetLoanChart'] ? charts['budgetLoanChart'].toBase64Image() : '';
             const savImg = charts['budgetSavingsChart'] ? charts['budgetSavingsChart'].toBase64Image() : '';
@@ -727,7 +760,7 @@
                 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
                 <head>
                     <meta charset="utf-8">
-                    <title>Budget Tracker Report</title>
+                    <title>${appName} Report</title>
                     <style>
                         body { font-family: Arial, sans-serif; }
                         h2, h3 { color: #333; }
@@ -737,7 +770,7 @@
                     </style>
                 </head>
                 <body>
-                    <h2>PHP Budget Tracker - Comprehensive Report</h2>
+                    <h2>${appName} - Comprehensive Report</h2>
                     <p>Generated by Ate Tine's Budget Tracker</p>
 
                     <h3>1. Visualizations / Graphs</h3>
@@ -782,6 +815,8 @@
         }
 
         function renderAll() {
+            applyAppTitle();
+
             // Budget Page Filtered Transactions
             const bMonth = document.getElementById('budgetFilterMonth').value;
             const bYear = document.getElementById('budgetFilterYear').value;
