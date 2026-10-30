@@ -51,6 +51,22 @@
                 </select>
             </div>
 
+            <!-- Filtered Summary Cards -->
+            <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="bg-white p-3 rounded-xl shadow">
+                    <div class="text-[10px] text-gray-500 font-bold uppercase">Filtered Income</div>
+                    <div id="budgetStringcome" class="text-sm font-bold text-green-600">₱0.00</div>
+                </div>
+                <div class="bg-white p-3 rounded-xl shadow">
+                    <div class="text-[10px] text-gray-500 font-bold uppercase">Filtered Expense</div>
+                    <div id="budgetStringExpense" class="text-sm font-bold text-red-600">₱0.00</div>
+                </div>
+                <div class="bg-white p-3 rounded-xl shadow">
+                    <div class="text-[10px] text-gray-500 font-bold uppercase">Net Balance</div>
+                    <div id="budgetStringNet" class="text-sm font-bold text-indigo-600">₱0.00</div>
+                </div>
+            </div>
+
             <!-- Visualizations -->
             <div class="bg-white p-4 rounded-xl shadow space-y-4">
                 <h3 class="font-bold text-gray-700 text-sm">Filtered Visualizations (Income, Expense & Forecast)</h3>
@@ -62,7 +78,7 @@
             </div>
             <!-- Transactions & Inflows Table -->
             <div class="bg-white p-4 rounded-xl shadow overflow-x-auto">
-                <h3 class="font-bold text-gray-700 mb-2">Transactions & Inflows</h3>
+                <h3 class="font-bold text-gray-700 mb-2">Transactions & Inflows (Filtered)</h3>
                 <table class="w-full text-left text-xs">
                     <thead>
                         <tr class="border-b text-gray-500 bg-gray-50">
@@ -376,7 +392,7 @@
 
     <!-- Script Application Logic -->
     <script>
-        let data = JSON.parse(localStorage.getItem('budgetAppV17')) || {
+        let data = JSON.parse(localStorage.getItem('budgetAppV18')) || {
             appTitle: "PHP Budget Tracker",
             transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS']
         };
@@ -386,7 +402,7 @@
         }
 
         function saveData() {
-            localStorage.setItem('budgetAppV17', JSON.stringify(data));
+            localStorage.setItem('budgetAppV18', JSON.stringify(data));
             renderAll();
         }
 
@@ -723,6 +739,11 @@
             const income = filteredTxns.filter(t => t.type.startsWith('INCOME')).reduce((a, t) => a + t.amount, 0);
             const expense = filteredTxns.filter(t => t.type.startsWith('EXPENSE')).reduce((a, t) => a + t.amount, 0);
             const totalForecast = filteredForecasts.filter(f => f.status === 'FORECASTED' && f.type === 'EXPENSE').reduce((a, f) => a + f.amount, 0);
+
+            // Update Filtered Summary Cards
+            document.getElementById('budgetStringcome').innerText = formatPHP(income);
+            document.getElementById('budgetStringExpense').innerText = formatPHP(expense);
+            document.getElementById('budgetStringNet').innerText = formatPHP(income - expense);
 
             const createOrUpdate = (id, type, chartData, options) => {
                 const ctx = document.getElementById(id);
