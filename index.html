@@ -365,7 +365,7 @@
 
     <!-- Script Application Logic -->
     <script>
-        let data = JSON.parse(localStorage.getItem('budgetAppV14')) || {
+        let data = JSON.parse(localStorage.getItem('budgetAppV15')) || {
             transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS']
         };
 
@@ -374,7 +374,7 @@
         }
 
         function saveData() {
-            localStorage.setItem('budgetAppV14', JSON.stringify(data));
+            localStorage.setItem('budgetAppV15', JSON.stringify(data));
             renderAll();
         }
 
@@ -603,6 +603,15 @@
                         }
                     }
                 }
+                saveData();
+            }
+        }
+
+        function updateForecastAmount(id, newAmount) {
+            const amt = parseFloat(newAmount);
+            const f = data.forecasts.find(x => x.id === id);
+            if(f && !isNaN(amt) && amt >= 0) {
+                f.amount = amt;
                 saveData();
             }
         }
@@ -840,9 +849,6 @@
 
             filteredForecasts.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-            // Group by Month & Semi-Month Cutoffs
-            // Cutoff 15th: 15th to 31st of month
-            // Cutoff 30th: 1st to 14th of month (Deadlines from 1st to 14th of next month fall under 30th of current month)
             const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
             let grouped = {};
 
@@ -859,7 +865,6 @@
                     periodKey = `${year}-${String(month).padStart(2, '0')}-15`;
                     periodTitle = `${monthNames[month - 1]} ${year} — 15th Cutoff (Due 15th–31st)`;
                 } else {
-                    // Due dates 1st to 14th belong to the previous month's 30th cutoff period
                     let prevMonth = month - 1;
                     let prevYear = year;
                     if (prevMonth === 0) { prevMonth = 12; prevYear -= 1; }
@@ -896,7 +901,7 @@
                                             <th class="p-2">Status</th>
                                             <th class="p-2">Date</th>
                                             <th class="p-2">Title</th>
-                                            <th class="p-2">Amount</th>
+                                            <th class="p-2">Amount (PHP)</th>
                                             <th class="p-2">Category</th>
                                             <th class="p-2">Type</th>
                                             <th class="p-2 text-center">Action</th>
@@ -917,7 +922,9 @@
                                 </td>
                                 <td class="p-2">${f.date}</td>
                                 <td class="p-2 font-medium">${f.title}</td>
-                                <td class="p-2 font-bold">${formatPHP(f.amount)}</td>
+                                <td class="p-2">
+                                    <input type="number" value="${f.amount}" onchange="updateForecastAmount(${f.id}, this.value)" class="border p-1 rounded w-24 text-xs font-bold text-gray-800">
+                                </td>
                                 <td class="p-2">${f.category}</td>
                                 <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] ${f.type === 'INCOME' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${f.type}</span></td>
                                 <td class="p-2 text-center"><button onclick="deleteForecast(${f.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button></td>
