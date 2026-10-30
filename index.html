@@ -113,7 +113,7 @@
         <!-- 4. FORECAST PAGE -->
         <div id="tab-forecast" class="tab-content hidden space-y-4">
             <div class="flex justify-between items-center">
-                <h2 class="text-xl font-bold text-gray-800">Expense Forecast</h2>
+                <h2 class="text-xl font-bold text-gray-800">Forecasts (Expense & Income)</h2>
                 <button onclick="openModal('forecastModal')" class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm font-semibold shadow">Add Forecast</button>
             </div>
             <!-- Drilldown Filter -->
@@ -142,7 +142,7 @@
             <div class="bg-white p-4 rounded-xl shadow space-y-2">
                 <div class="flex justify-between text-green-600 font-bold"><span>Total Income:</span><span id="sumIncome">₱0.00</span></div>
                 <div class="flex justify-between text-red-600 font-bold"><span>Total Expenses:</span><span id="sumExpense">₱0.00</span></div>
-                <div class="flex justify-between text-amber-600 font-bold"><span>Total Forecasted:</span><span id="sumForecast">₱0.00</span></div>
+                <div class="flex justify-between text-amber-600 font-bold"><span>Total Forecasted (Expense):</span><span id="sumForecast">₱0.00</span></div>
                 <hr>
                 <div class="flex justify-between text-gray-800 font-bold"><span>Net Balance:</span><span id="sumNet">₱0.00</span></div>
             </div>
@@ -292,9 +292,13 @@
 
     <div id="forecastModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center p-4 z-50">
         <div class="bg-white p-6 rounded-xl w-full max-w-sm space-y-3">
-            <h3 class="text-lg font-bold">Add Forecast Expense</h3>
+            <h3 class="text-lg font-bold">Add Forecast</h3>
+            <select id="fTypeSelect" class="w-full border p-2 rounded">
+                <option value="EXPENSE">Expense Forecast</option>
+                <option value="INCOME">Income Forecast</option>
+            </select>
             <select id="fCategorySelect" onchange="handleForecastCategoryChange()" class="w-full border p-2 rounded">
-                <option value="General">General Expense</option>
+                <option value="General">General</option>
                 <option value="Loan">Loan</option>
             </select>
             <div id="loanNameContainer" class="hidden">
@@ -462,6 +466,7 @@
                         if(targetDate >= today) {
                             data.forecasts.push({
                                 id: Date.now() + i,
+                                type: 'EXPENSE',
                                 category: 'Loan',
                                 title: name,
                                 amount: installment,
@@ -482,6 +487,7 @@
                         if(d1 >= today) {
                             data.forecasts.push({
                                 id: Date.now() + (i * 2),
+                                type: 'EXPENSE',
                                 category: 'Loan',
                                 title: name,
                                 amount: installment,
@@ -492,6 +498,7 @@
                         if(d2 >= today) {
                             data.forecasts.push({
                                 id: Date.now() + (i * 2) + 1,
+                                type: 'EXPENSE',
                                 category: 'Loan',
                                 title: name,
                                 amount: installment,
@@ -512,12 +519,13 @@
 
         // Forecast
         function addForecast() {
+            const fType = document.getElementById('fTypeSelect').value;
             const category = document.getElementById('fCategorySelect').value;
             const title = document.getElementById('fTitle').value;
             const amount = parseFloat(document.getElementById('fAmount').value);
             const date = document.getElementById('fDate').value || new Date().toISOString().split('T')[0];
             if(title && amount > 0) {
-                data.forecasts.push({id: Date.now(), category, title, amount, date, checked: false});
+                data.forecasts.push({id: Date.now(), type: fType, category, title, amount, date, checked: false});
                 closeModal('forecastModal');
                 saveData();
             }
@@ -527,8 +535,16 @@
             if(f) {
                 f.checked = !f.checked;
                 if(f.checked) {
-                    data.transactions.unshift({id: Date.now(), title: `Forecast: ${f.title}`, amount: f.amount, type: 'EXPENSE', category: f.category || 'Forecasted', date: f.date});
-                    if(f.category === 'Loan') {
+                    const txnType = f.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+                    data.transactions.unshift({
+                        id: Date.now(), 
+                        title: `Forecast: ${f.title}`, 
+                        amount: f.amount, 
+                        type: txnType, 
+                        category: f.category || 'Forecasted', 
+                        date: f.date
+                    });
+                    if(f.type === 'EXPENSE' && f.category === 'Loan') {
                         const loan = data.loans.find(l => l.name.toLowerCase() === f.title.toLowerCase());
                         if(loan) {
                             loan.remaining = Math.max(0, loan.remaining - f.amount);
@@ -595,12 +611,12 @@
             reader.readAsText(file);
         }
 
-        // Charts Engine (Income, Expense, and Forecast View)
+        // Charts Engine
         let charts = {};
         function updateCharts() {
             const income = data.transactions.filter(t => t.type === 'INCOME').reduce((a, t) => a + t.amount, 0);
             const expense = data.transactions.filter(t => t.type === 'EXPENSE').reduce((a, t) => a + t.amount, 0);
-            const totalForecast = data.forecasts.filter(f => !f.checked).reduce((a, f) => a + f.amount, 0);
+            const totalForecast = data.forecasts.filter(f => !f.checked && f.type !== 'INCOME').reduce((a, f) => a + f.amount, 0);
 
             document.getElementById('sumIncome').innerText = formatPHP(income);
             document.getElementById('sumExpense').innerText = formatPHP(expense);
@@ -678,10 +694,10 @@
                         ${data.loans.map(l => `<tr><td>${l.name}</td><td>${l.type}</td><td>${l.total}</td><td>${l.remaining}</td><td>${l.installment}</td><td>${l.freq}</td></tr>`).join('')}
                     </table>
 
-                    <h3>5. Expense Forecasts</h3>
+                    <h3>5. Forecasts (Expense & Income)</h3>
                     <table>
-                        <tr><th>Category</th><th>Title</th><th>Amount (PHP)</th><th>Due Date</th><th>Checked</th></tr>
-                        ${data.forecasts.map(f => `<tr><td>${f.category}</td><td>${f.title}</td><td>${f.amount}</td><td>${f.date}</td><td>${f.checked}</td></tr>`).join('')}
+                        <tr><th>Type</th><th>Category</th><th>Title</th><th>Amount (PHP)</th><th>Due Date</th><th>Checked</th></tr>
+                        ${data.forecasts.map(f => `<tr><td>${f.type || 'EXPENSE'}</td><td>${f.category}</td><td>${f.title}</td><td>${f.amount}</td><td>${f.date}</td><td>${f.checked}</td></tr>`).join('')}
                     </table>
                 </body>
                 </html>
@@ -785,11 +801,15 @@
                         </div>
                 `;
                 group.items.forEach(f => {
+                    const isIncome = f.type === 'INCOME';
                     forecastHtml += `
                         <div class="flex items-center justify-between text-sm bg-gray-50 p-2 rounded ml-2">
                             <label class="flex items-center space-x-2 cursor-pointer flex-1">
                                 <input type="checkbox" ${f.checked ? 'checked' : ''} onchange="toggleForecast(${f.id})" class="accent-indigo-600">
-                                <span class="${f.checked ? 'line-through text-gray-400' : 'font-bold'}">[${f.category || 'General'}] ${f.title} (${formatPHP(f.amount)}) - ${f.date}</span>
+                                <span class="${f.checked ? 'line-through text-gray-400' : 'font-bold'}">
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded ${isIncome ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${isIncome ? 'INCOME' : 'EXPENSE'}</span>
+                                    [${f.category || 'General'}] ${f.title} (<span class="${isIncome ? 'text-green-600' : 'text-gray-700'}">${formatPHP(f.amount)}</span>) - ${f.date}
+                                </span>
                             </label>
                             <button onclick="deleteForecast(${f.id})" class="text-red-500"><i class="fas fa-trash"></i></button>
                         </div>
