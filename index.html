@@ -438,7 +438,7 @@
         }
         function deleteSavings(id) { data.savings = data.savings.filter(s => s.id !== id); saveData(); }
 
-        // Loans
+        // Loans (with Past Date Filter Validation)
         function addLoan() {
             const name = document.getElementById('lName').value;
             const amount = parseFloat(document.getElementById('lAmount').value);
@@ -450,19 +450,27 @@
             if(name && amount > 0 && installment > 0) {
                 data.loans.push({id: Date.now(), name, total: amount, remaining: amount, type, months, installment, freq});
                 
+                const todayStr = new Date().toISOString().split('T')[0];
                 const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
                 if(freq === 'MONTHLY') {
                     const dueDay = parseInt(document.getElementById('lDueDate').value) || 10;
                     for(let i = 0; i < months; i++) {
                         let targetDate = new Date(today.getFullYear(), today.getMonth() + i, dueDay);
-                        data.forecasts.push({
-                            id: Date.now() + i,
-                            category: 'Loan',
-                            title: name,
-                            amount: installment,
-                            date: targetDate.toISOString().split('T')[0],
-                            checked: false
-                        });
+                        targetDate.setHours(0, 0, 0, 0);
+                        
+                        // Only add if target date is today or in the future
+                        if(targetDate >= today) {
+                            data.forecasts.push({
+                                id: Date.now() + i,
+                                category: 'Loan',
+                                title: name,
+                                amount: installment,
+                                date: targetDate.toISOString().split('T')[0],
+                                checked: false
+                            });
+                        }
                     }
                 } else {
                     const due1 = parseInt(document.getElementById('lDue1').value) || 15;
@@ -470,22 +478,29 @@
                     for(let i = 0; i < months; i++) {
                         let d1 = new Date(today.getFullYear(), today.getMonth() + i, due1);
                         let d2 = new Date(today.getFullYear(), today.getMonth() + i, due2);
-                        data.forecasts.push({
-                            id: Date.now() + (i * 2),
-                            category: 'Loan',
-                            title: name,
-                            amount: installment,
-                            date: d1.toISOString().split('T')[0],
-                            checked: false
-                        });
-                        data.forecasts.push({
-                            id: Date.now() + (i * 2) + 1,
-                            category: 'Loan',
-                            title: name,
-                            amount: installment,
-                            date: d2.toISOString().split('T')[0],
-                            checked: false
-                        });
+                        d1.setHours(0, 0, 0, 0);
+                        d2.setHours(0, 0, 0, 0);
+
+                        if(d1 >= today) {
+                            data.forecasts.push({
+                                id: Date.now() + (i * 2),
+                                category: 'Loan',
+                                title: name,
+                                amount: installment,
+                                date: d1.toISOString().split('T')[0],
+                                checked: false
+                            });
+                        }
+                        if(d2 >= today) {
+                            data.forecasts.push({
+                                id: Date.now() + (i * 2) + 1,
+                                category: 'Loan',
+                                title: name,
+                                amount: installment,
+                                date: d2.toISOString().split('T')[0],
+                                checked: false
+                            });
+                        }
                     }
                 }
 
