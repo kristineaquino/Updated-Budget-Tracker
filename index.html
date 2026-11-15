@@ -116,7 +116,7 @@
                             <th class="p-2">Running Bal</th>
                             <th class="p-2">Withdrawal</th>
                             <th class="p-2">Deposit</th>
-                            <th class="p-2">Interest</th>
+                            <th class="p-2 text-center">Add Interest</th>
                             <th class="p-2 text-center">Actions</th>
                         </tr>
                     </thead>
@@ -125,7 +125,7 @@
             </div>
             <!-- Savings Deposit & Withdrawal History Table -->
             <div class="bg-white p-4 rounded-xl shadow overflow-x-auto">
-                <h3 class="font-bold text-gray-700 mb-2 text-sm">Savings Deposit & Withdrawal History</h3>
+                <h3 class="font-bold text-gray-700 mb-2 text-sm">Savings History</h3>
                 <table class="w-full text-left text-xs">
                     <thead>
                         <tr class="border-b text-gray-500 bg-gray-50">
@@ -160,6 +160,7 @@
                             <th class="p-2">Remaining</th>
                             <th class="p-2">Type</th>
                             <th class="p-2 text-center">Pay</th>
+                            <th class="p-2 text-center">Add Interest</th>
                             <th class="p-2">Terms (Mos)</th>
                             <th class="p-2">Freq</th>
                             <th class="p-2">Start Date</th>
@@ -172,13 +173,13 @@
             </div>
             <!-- Loan Payment History Table -->
             <div class="bg-white p-4 rounded-xl shadow overflow-x-auto">
-                <h3 class="font-bold text-gray-700 mb-2 text-sm">Loan Payment History</h3>
+                <h3 class="font-bold text-gray-700 mb-2 text-sm">Loan History</h3>
                 <table class="w-full text-left text-xs">
                     <thead>
                         <tr class="border-b text-gray-500 bg-gray-50">
                             <th class="p-2">Date</th>
                             <th class="p-2">Loan Name</th>
-                            <th class="p-2 text-right">Amount Paid</th>
+                            <th class="p-2 text-right">Amount</th>
                         </tr>
                     </thead>
                     <tbody id="loanPaymentHistoryTable"></tbody>
@@ -321,7 +322,6 @@
             <h3 class="text-lg font-bold">Add Bank Savings Account</h3>
             <input type="text" id="sName" placeholder="Bank / Account Name" class="w-full border p-2 rounded">
             <input type="number" id="sInitial" placeholder="Initial Balance" class="w-full border p-2 rounded">
-            <input type="number" id="sInterest" placeholder="Interest Rate (%)" class="w-full border p-2 rounded">
             <div class="flex justify-end space-x-2">
                 <button onclick="closeModal('savingsModal')" class="px-4 py-2 text-gray-600">Cancel</button>
                 <button onclick="addSavingsAccount()" class="bg-indigo-600 text-white px-4 py-2 rounded">Create</button>
@@ -576,11 +576,10 @@
         function addSavingsAccount() {
             const name = document.getElementById('sName').value;
             const initial = parseFloat(document.getElementById('sInitial').value) || 0;
-            const interest = parseFloat(document.getElementById('sInterest').value) || 0;
             const date = todayStr();
 
             if(name) {
-                data.savings.push({id: Date.now(), name, initial, balance: initial, interest, withdrawal: 0, deposit: 0, date});
+                data.savings.push({id: Date.now(), name, initial, balance: initial, interestEarned: 0, withdrawal: 0, deposit: 0, date});
                 closeModal('savingsModal');
                 saveData();
             }
@@ -608,6 +607,20 @@
             } else if(amt > sav?.balance) {
                 alert("Insufficient savings balance.");
             }
+        }
+        // Add interest earned to a savings account (raises Running Bal and logs in Savings History)
+        function addSavingsInterest(id) {
+            const sav = data.savings.find(s => s.id === id);
+            if(!sav) return;
+            const input = prompt(`Enter the interest amount to add to "${sav.name}"\nCurrent running balance: ${formatPHP(sav.balance)}`);
+            if(input === null) return;
+            const amt = r2(parseFloat(input));
+            if(!(amt > 0)) { alert("Please enter a valid interest amount."); return; }
+            sav.balance = r2(sav.balance + amt);
+            sav.interestEarned = r2((sav.interestEarned || 0) + amt);
+            if(!data.savingsInterests) data.savingsInterests = [];
+            data.savingsInterests.unshift({ id: Date.now(), savingsId: sav.id, title: `Interest: ${sav.name}`, amount: amt, date: todayStr() });
+            saveData();
         }
         function deleteSavings(id) { data.savings = data.savings.filter(s => s.id !== id); saveData(); }
 
@@ -708,6 +721,37 @@
             }
             saveData();
         }
+        // Add interest to a loan: raises Remaining, adds a forecast, and logs it in Loan History
+        function addLoanInterest(id) {
+            const loan = data.loans.find(l => l.id === id);
+            if(!loan) return;
+            const input = prompt(`Enter the interest amount to add to "${loan.name}"\nCurrent remaining: ${formatPHP(loan.remaining)}`);
+            if(input === null) return;
+            const amt = r2(parseFloat(input));
+            if(!(amt > 0)) { alert("Please enter a valid interest amount."); return; }
+
+            // forecast date: next pending due date (today or later), otherwise today
+            const today = todayStr();
+            const next = pendingLoanForecasts(loan).find(f => f.date >= today);
+            const date = next ? next.date : today;
+
+            loan.remaining = r2(loan.remaining + amt);
+            data.forecasts.push({
+                id: Date.now() + Math.floor(Math.random() * 1000),
+                loanId: loan.id,
+                status: 'FORECASTED',
+                type: loan.type === 'RECEIVABLE' ? 'INCOME' : 'EXPENSE',
+                category: 'LOAN',
+                title: `${loan.name} (Interest)`,
+                amount: amt,
+                date
+            });
+            if(!data.loanInterests) data.loanInterests = [];
+            data.loanInterests.unshift({ id: Date.now(), loanId: loan.id, title: `Interest: ${loan.name}`, amount: amt, date: today });
+            reconcileLoanForecasts(loan);
+            saveData();
+        }
+
         function deleteLoan(id) {
             const loan = data.loans.find(l => l.id === id);
             if(loan) removeAllLoanForecasts(loan);
@@ -924,8 +968,8 @@
 
                     <h3>3. Bank Savings Accounts</h3>
                     <table>
-                        <tr><th>Date</th><th>Bank / Acct Name</th><th>Initial Balance</th><th>Running Balance</th><th>Withdrawal</th><th>Deposit</th><th>Interest (%)</th></tr>
-                        ${data.savings.map(s => `<tr><td>${s.date}</td><td>${s.name}</td><td>${s.initial}</td><td>${s.balance}</td><td>${s.withdrawal}</td><td>${s.deposit}</td><td>${s.interest}</td></tr>`).join('')}
+                        <tr><th>Date</th><th>Bank / Acct Name</th><th>Initial Balance</th><th>Running Balance</th><th>Withdrawal</th><th>Deposit</th><th>Interest Earned</th></tr>
+                        ${data.savings.map(s => `<tr><td>${s.date}</td><td>${s.name}</td><td>${s.initial}</td><td>${s.balance}</td><td>${s.withdrawal}</td><td>${s.deposit}</td><td>${s.interestEarned || 0}</td></tr>`).join('')}
                     </table>
 
                     <h3>4. Active Loans</h3>
@@ -985,7 +1029,7 @@
                     <td class="p-2 font-bold text-indigo-600">${formatPHP(s.balance)}</td>
                     <td class="p-2 text-amber-600">${formatPHP(s.withdrawal)}</td>
                     <td class="p-2 text-green-600">${formatPHP(s.deposit)}</td>
-                    <td class="p-2">${s.interest}%</td>
+                    <td class="p-2 text-center"><button onclick="addSavingsInterest(${s.id})" class="bg-amber-500 text-white px-2 py-0.5 rounded text-[10px] font-semibold hover:bg-amber-600">+ Interest</button></td>
                     <td class="p-2 text-center space-x-1">
                         <button onclick="depositSavings(${s.id})" class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px]">Deposit</button>
                         <button onclick="withdrawSavings(${s.id})" class="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px]">Withdraw</button>
@@ -994,13 +1038,19 @@
                 </tr>
             `).join('') || '<tr><td colspan="8" class="p-3 text-center text-gray-400">No bank savings accounts added.</td></tr>';
 
-            // Savings History Table
-            const savingsHistory = data.transactions.filter(t => t.category === 'SAVINGS');
-            document.getElementById('savingsHistoryTable').innerHTML = savingsHistory.map(sh => `
+            // Savings History Table (deposits, withdrawals + interest, newest first)
+            const savingsRows = [
+                ...data.transactions
+                    .filter(t => t.category === 'SAVINGS')
+                    .map(t => ({ id: t.id, date: t.date, title: t.title, amount: t.amount, kind: t.type.startsWith('INCOME') ? 'OUT' : 'IN' })),
+                ...(data.savingsInterests || []).map(i => ({ id: i.id, date: i.date, title: i.title, amount: i.amount, kind: 'INTEREST' }))
+            ].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+            const savRowCls = { OUT: ['text-green-600', '+'], IN: ['text-indigo-600', '-'], INTEREST: ['text-amber-600', '+'] };
+            document.getElementById('savingsHistoryTable').innerHTML = savingsRows.map(sh => `
                 <tr class="border-b">
                     <td class="p-2 text-gray-600">${sh.date}</td>
-                    <td class="p-2 font-medium">${sh.title}</td>
-                    <td class="p-2 text-right font-bold ${sh.type.startsWith('INCOME') ? 'text-green-600' : 'text-indigo-600'}">${sh.type.startsWith('INCOME') ? '+' : '-'}${formatPHP(sh.amount)}</td>
+                    <td class="p-2 font-medium">${sh.title}${sh.kind === 'INTEREST' ? ' <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700">INTEREST</span>' : ''}</td>
+                    <td class="p-2 text-right font-bold ${savRowCls[sh.kind][0]}">${savRowCls[sh.kind][1]}${formatPHP(sh.amount)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="3" class="py-3 text-center text-gray-400">No savings history recorded yet.</td></tr>';
 
@@ -1016,23 +1066,30 @@
                     </td>
                     <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] ${l.type === 'PAYABLE' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}">${l.type}</span></td>
                     <td class="p-2 text-center">${l.remaining > 0 ? `<button onclick="payLoan(${l.id})" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-[10px] font-semibold hover:bg-indigo-700">${l.type === 'RECEIVABLE' ? 'Receive' : 'Pay'}</button>` : '<span class="text-[10px] text-green-600 font-semibold">Paid</span>'}</td>
+                    <td class="p-2 text-center"><button onclick="addLoanInterest(${l.id})" class="bg-amber-500 text-white px-2 py-0.5 rounded text-[10px] font-semibold hover:bg-amber-600">+ Interest</button></td>
                     <td class="p-2">${l.months} mos</td>
                     <td class="p-2">${l.freq}</td>
                     <td class="p-2">${l.startDate || '-'}</td>
                     <td class="p-2 text-[10px]">${l.dueDates}</td>
                     <td class="p-2 text-center"><button onclick="deleteLoan(${l.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button></td>
                 </tr>
-            `).join('') || '<tr><td colspan="11" class="p-3 text-center text-gray-400">No active loans recorded.</td></tr>';
+            `).join('') || '<tr><td colspan="12" class="p-3 text-center text-gray-400">No active loans recorded.</td></tr>';
 
-            // Loan Payment History Table
-            const loanPayments = data.transactions.filter(t => t.category === 'LOAN' && (t.loanPayment || t.type.startsWith('EXPENSE')));
-            document.getElementById('loanPaymentHistoryTable').innerHTML = loanPayments.map(lp => `
+            // Loan History Table (payments + interest added, newest first)
+            const loanRows = [
+                ...data.transactions
+                    .filter(t => t.category === 'LOAN' && (t.loanPayment || t.type.startsWith('EXPENSE')))
+                    .map(t => ({ id: t.id, date: t.date, title: t.title, amount: t.amount, kind: t.type.startsWith('INCOME') ? 'RECEIVED' : 'PAID' })),
+                ...(data.loanInterests || []).map(i => ({ id: i.id, date: i.date, title: i.title, amount: i.amount, kind: 'INTEREST' }))
+            ].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+            const loanRowCls = { PAID: ['text-red-600', '-'], RECEIVED: ['text-green-600', '+'], INTEREST: ['text-amber-600', '+'] };
+            document.getElementById('loanPaymentHistoryTable').innerHTML = loanRows.map(lp => `
                 <tr class="border-b">
                     <td class="p-2 text-gray-600">${lp.date}</td>
-                    <td class="p-2 font-medium">${lp.title}</td>
-                    <td class="p-2 text-right font-bold ${lp.type.startsWith('INCOME') ? 'text-green-600' : 'text-red-600'}">${lp.type.startsWith('INCOME') ? '+' : '-'}${formatPHP(lp.amount)}</td>
+                    <td class="p-2 font-medium">${lp.title}${lp.kind === 'INTEREST' ? ' <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700">INTEREST</span>' : ''}</td>
+                    <td class="p-2 text-right font-bold ${loanRowCls[lp.kind][0]}">${loanRowCls[lp.kind][1]}${formatPHP(lp.amount)}</td>
                 </tr>
-            `).join('') || '<tr><td colspan="3" class="py-3 text-center text-gray-400">No loan payments recorded yet.</td></tr>';
+            `).join('') || '<tr><td colspan="3" class="py-3 text-center text-gray-400">No loan history recorded yet.</td></tr>';
 
             // Forecasts Separated by Month and Semi-Month Periods
             const fMonth = document.getElementById('filterMonth').value;
