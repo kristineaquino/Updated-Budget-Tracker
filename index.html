@@ -159,6 +159,7 @@
                             <th class="p-2">Installment</th>
                             <th class="p-2">Remaining</th>
                             <th class="p-2">Type</th>
+                            <th class="p-2 text-center">Pay</th>
                             <th class="p-2">Terms (Mos)</th>
                             <th class="p-2">Freq</th>
                             <th class="p-2">Start Date</th>
@@ -263,26 +264,19 @@
                 <p class="text-gray-600 text-sm mb-4 px-4">
                     I’m always open to discussing new projects, creative ideas, or opportunities to collaborate.
                 </p>
-                <p class="text-indigo-600 font-semibold text-sm mb-4">
-                    <a href="mailto:kristine.aquino2019@gmail.com">kristine.aquino2019@gmail.com</a>
-                </p>
                 <div class="space-y-2">
-                    <a href="https://www.linkedin.com/in/kristineaquino/" target="_blank" class="block bg-blue-600 text-white py-2 px-4 rounded-lg font-medium shadow text-sm">Connect on LinkedIn</a>
-                    <a href="https://sites.google.com/view/kristinedaquino/home" target="_blank" class="block border border-indigo-600 text-indigo-600 py-2 px-4 rounded-lg font-medium shadow-sm text-sm">View Portfolio</a>
+                    <a href="https://www.linkedin.com/in/kristineaquino/" target="_blank" rel="noopener" class="block bg-blue-600 text-white py-2 px-4 rounded-lg font-medium shadow text-sm">Connect on LinkedIn</a>
+                    <a href="https://sites.google.com/view/kristinedaquino/home" target="_blank" rel="noopener" class="block border border-indigo-600 text-indigo-600 py-2 px-4 rounded-lg font-medium shadow-sm text-sm">View Portfolio</a>
                 </div>
             </div>
 
-            <!-- Suggestion / Error Report Box -->
+            <!-- Suggestions / Comments via Discord -->
             <div class="bg-white p-4 rounded-xl shadow text-left space-y-3">
                 <h3 class="font-bold text-gray-800 text-sm">Found an error or have a suggestion?</h3>
-                <p class="text-xs text-gray-500">Let the creator know! Please provide your email so she can reply to you.</p>
-                
-                <input type="email" id="feedbackEmail" placeholder="Your Email Address" class="w-full border p-2 rounded text-sm">
-                <textarea id="feedbackMessage" placeholder="Type your suggestion or error report here..." rows="3" class="w-full border p-2 rounded text-sm"></textarea>
-                
-                <button onclick="sendFeedback()" class="bg-indigo-600 text-white w-full py-2 rounded text-sm font-semibold shadow hover:bg-indigo-700">
-                    <i class="fas fa-paper-plane mr-1"></i> Send to Creator
-                </button>
+                <p class="text-xs text-gray-500">Join the Discord community to send your suggestions, comments, and error reports directly to the creator.</p>
+                <a href="https://discord.gg/V3QB8fDqra" target="_blank" rel="noopener" class="block text-center bg-[#5865F2] text-white w-full py-2 rounded text-sm font-semibold shadow hover:opacity-90">
+                    <i class="fab fa-discord mr-1"></i> Join our Discord Community
+                </a>
             </div>
 
             <p class="font-bold text-gray-700 pt-2">~ Ate Tine</p>
@@ -405,6 +399,79 @@
             return '₱' + Number(num).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         }
 
+        // ---------- Date helpers (local time, avoids UTC day-shift) ----------
+        const r2 = n => Math.round(n * 100) / 100;
+        const pad2 = n => String(n).padStart(2, '0');
+        function localISO(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+        function todayStr() { return localISO(new Date()); }
+        function parseLocalDate(str) { const [y, m, d] = str.split('-').map(Number); return new Date(y, m - 1, d); }
+        // Due date for a given month offset, clamped to the month's last day (e.g. 31 -> 28/30)
+        function dueDateFor(year, monthIndex, day) {
+            const base = new Date(year, monthIndex, 1);
+            const last = new Date(base.getFullYear(), base.getMonth() + 1, 0).getDate();
+            return new Date(base.getFullYear(), base.getMonth(), Math.min(day, last));
+        }
+
+        // ---------- Loan <-> Forecast tally ----------
+        function loanMatches(f, loan) {
+            if (f.category !== 'LOAN') return false;
+            if (f.loanId) return f.loanId === loan.id;
+            return (f.title || '').toLowerCase() === loan.name.toLowerCase();
+        }
+        function pendingLoanForecasts(loan) {
+            return data.forecasts
+                .filter(f => f.status === 'FORECASTED' && loanMatches(f, loan))
+                .sort((a, b) => a.date.localeCompare(b.date));
+        }
+        function loanForecastTotal(loan) {
+            return r2(pendingLoanForecasts(loan).reduce((a, f) => a + f.amount, 0));
+        }
+        function removeAllLoanForecasts(loan) {
+            data.forecasts = data.forecasts.filter(f => !loanMatches(f, loan));
+        }
+        // Make the total of pending forecasts equal the loan's remaining balance
+        function reconcileLoanForecasts(loan, lockId) {
+            if (loan.remaining <= 0.004) { removeAllLoanForecasts(loan); return; }
+            const pend = pendingLoanForecasts(loan);
+            const total = r2(pend.reduce((a, f) => a + f.amount, 0));
+            const diff = r2(loan.remaining - total);
+            if (Math.abs(diff) < 0.005) return;
+            const others = pend.filter(f => f.id !== lockId);
+            const fType = loan.type === 'RECEIVABLE' ? 'INCOME' : 'EXPENSE';
+
+            if (diff > 0) {
+                if (others.length) {
+                    others[others.length - 1].amount = r2(others[others.length - 1].amount + diff);
+                } else {
+                    let date = todayStr();
+                    const locked = pend[0];
+                    if (locked) {
+                        const ld = parseLocalDate(locked.date);
+                        date = localISO(dueDateFor(ld.getFullYear(), ld.getMonth() + 1, ld.getDate()));
+                    }
+                    data.forecasts.push({ id: Date.now() + Math.floor(Math.random() * 1000), loanId: loan.id, status: 'FORECASTED', type: fType, category: 'LOAN', title: loan.name, amount: diff, date });
+                }
+            } else {
+                let excess = -diff;
+                const order = [...others].reverse().concat(pend.filter(f => f.id === lockId));
+                for (const f of order) {
+                    if (excess <= 0.004) break;
+                    const take = Math.min(excess, f.amount);
+                    f.amount = r2(f.amount - take);
+                    excess = r2(excess - take);
+                    if (f.amount <= 0.004) data.forecasts = data.forecasts.filter(x => x !== f);
+                }
+            }
+        }
+        // One-time cleanup: drop PAID forecasts and tally loans with their forecasts
+        function migrateTally() {
+            if (data.tallyMigrated) return;
+            data.forecasts = (data.forecasts || []).filter(f => f.status !== 'PAID');
+            (data.loans || []).forEach(l => reconcileLoanForecasts(l));
+            data.tallyMigrated = true;
+            localStorage.setItem('budgetAppV19', JSON.stringify(data));
+        }
+
         function saveData() {
             localStorage.setItem('budgetAppV19', JSON.stringify(data));
             renderAll();
@@ -457,7 +524,7 @@
             if(id === 'transactionModal') {
                 updateTransactionTypeOptions();
             } else if(id === 'loanModal') {
-                document.getElementById('lStartDate').value = new Date().toISOString().split('T')[0];
+                document.getElementById('lStartDate').value = todayStr();
             }
         }
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
@@ -495,7 +562,7 @@
             const amount = parseFloat(document.getElementById('tAmount').value);
             const category = document.getElementById('tCategory').value;
             const type = document.getElementById('tType').value;
-            const date = new Date().toISOString().split('T')[0];
+            const date = todayStr();
 
             if(title && amount > 0) {
                 data.transactions.unshift({id: Date.now(), title, amount, category, type, date});
@@ -510,7 +577,7 @@
             const name = document.getElementById('sName').value;
             const initial = parseFloat(document.getElementById('sInitial').value) || 0;
             const interest = parseFloat(document.getElementById('sInterest').value) || 0;
-            const date = new Date().toISOString().split('T')[0];
+            const date = todayStr();
 
             if(name) {
                 data.savings.push({id: Date.now(), name, initial, balance: initial, interest, withdrawal: 0, deposit: 0, date});
@@ -525,7 +592,7 @@
             if(sav && amt > 0) {
                 sav.balance += amt;
                 sav.deposit += amt;
-                data.transactions.unshift({id: Date.now(), title: `Deposit: ${sav.name}`, amount: amt, category: 'SAVINGS', type: 'EXPENSE - SAVINGS', date: new Date().toISOString().split('T')[0]});
+                data.transactions.unshift({id: Date.now(), title: `Deposit: ${sav.name}`, amount: amt, category: 'SAVINGS', type: 'EXPENSE - SAVINGS', date: todayStr()});
                 saveData();
             }
         }
@@ -536,7 +603,7 @@
             if(sav && amt > 0 && amt <= sav.balance) {
                 sav.balance -= amt;
                 sav.withdrawal += amt;
-                data.transactions.unshift({id: Date.now(), title: `Withdrawal: ${sav.name}`, amount: amt, category: 'SAVINGS', type: 'INCOME - SAVINGS WITHDRAWAL', date: new Date().toISOString().split('T')[0]});
+                data.transactions.unshift({id: Date.now(), title: `Withdrawal: ${sav.name}`, amount: amt, category: 'SAVINGS', type: 'INCOME - SAVINGS WITHDRAWAL', date: todayStr()});
                 saveData();
             } else if(amt > sav?.balance) {
                 alert("Insufficient savings balance.");
@@ -546,78 +613,107 @@
 
         // Loans
         function addLoan() {
-            const name = document.getElementById('lName').value;
+            const name = document.getElementById('lName').value.trim();
             const principal = parseFloat(document.getElementById('lAmount').value);
             const type = document.getElementById('lType').value;
             const months = parseInt(document.getElementById('lMonths').value) || 1;
             const installment = parseFloat(document.getElementById('lInstallment').value) || 0;
-            const startDateStr = document.getElementById('lStartDate').value || new Date().toISOString().split('T')[0];
+            const startDateStr = document.getElementById('lStartDate').value || todayStr();
             const freq = document.querySelector('input[name="lFreq"]:checked').value;
 
             if(name && principal > 0 && installment > 0) {
+                const loanId = Date.now();
+                const startDate = parseLocalDate(startDateStr);
+                const fType = type === 'RECEIVABLE' ? 'INCOME' : 'EXPENSE';
+                let seq = 0;
+                const pushForecast = (d) => data.forecasts.push({
+                    id: loanId + 1 + (seq++), loanId, status: 'FORECASTED', type: fType,
+                    category: 'LOAN', title: name, amount: installment, date: localISO(d)
+                });
                 let dueDatesStr = '';
-                const startDate = new Date(startDateStr);
-                startDate.setHours(0, 0, 0, 0);
 
                 if(freq === 'MONTHLY') {
                     const dueDay = parseInt(document.getElementById('lDueDate').value) || startDate.getDate();
                     dueDatesStr = `Day ${dueDay} monthly`;
                     for(let i = 0; i < months; i++) {
-                        let targetDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, dueDay);
-                        targetDate.setHours(0, 0, 0, 0);
-                        data.forecasts.push({
-                            id: Date.now() + i,
-                            status: 'FORECASTED',
-                            type: 'EXPENSE',
-                            category: 'LOAN',
-                            title: name,
-                            amount: installment,
-                            date: targetDate.toISOString().split('T')[0]
-                        });
+                        pushForecast(dueDateFor(startDate.getFullYear(), startDate.getMonth() + i, dueDay));
                     }
                 } else {
                     const due1 = parseInt(document.getElementById('lDue1').value) || 15;
                     const due2 = parseInt(document.getElementById('lDue2').value) || 30;
                     dueDatesStr = `Days ${due1} & ${due2}`;
                     for(let i = 0; i < months; i++) {
-                        let d1 = new Date(startDate.getFullYear(), startDate.getMonth() + i, due1);
-                        let d2 = new Date(startDate.getFullYear(), startDate.getMonth() + i, due2);
-                        d1.setHours(0, 0, 0, 0);
-                        d2.setHours(0, 0, 0, 0);
-
-                        if(d1 >= startDate) {
-                            data.forecasts.push({
-                                id: Date.now() + (i * 2),
-                                status: 'FORECASTED',
-                                type: 'EXPENSE',
-                                category: 'LOAN',
-                                title: name,
-                                amount: installment,
-                                date: d1.toISOString().split('T')[0]
-                            });
-                        }
-                        if(d2 >= startDate) {
-                            data.forecasts.push({
-                                id: Date.now() + (i * 2) + 1,
-                                status: 'FORECASTED',
-                                type: 'EXPENSE',
-                                category: 'LOAN',
-                                title: name,
-                                amount: installment,
-                                date: d2.toISOString().split('T')[0]
-                            });
-                        }
+                        const d1 = dueDateFor(startDate.getFullYear(), startDate.getMonth() + i, due1);
+                        const d2 = dueDateFor(startDate.getFullYear(), startDate.getMonth() + i, due2);
+                        if(d1 >= startDate) pushForecast(d1);
+                        if(d2 >= startDate) pushForecast(d2);
                     }
                 }
 
-                data.loans.push({id: Date.now(), name, principal, remaining: principal, installment, type, months, freq, startDate: startDateStr, dueDates: dueDatesStr});
+                const loan = {id: loanId, name, principal, remaining: principal, installment, type, months, freq, startDate: startDateStr, dueDates: dueDatesStr};
+                data.loans.push(loan);
+                reconcileLoanForecasts(loan); // forecasts now add up to the loan amount
                 closeModal('loanModal');
                 saveData();
             } else {
                 alert("Please fill out all required loan fields correctly.");
             }
         }
-        function deleteLoan(id) { data.loans = data.loans.filter(l => l.id !== id); saveData(); }
+
+        // Pay (or receive) any amount on a loan
+        function payLoan(id) {
+            const loan = data.loans.find(l => l.id === id);
+            if(!loan) return;
+            if(loan.remaining <= 0.004) { alert("This loan is already fully paid."); return; }
+            const isReceivable = loan.type === 'RECEIVABLE';
+            const suggested = Math.min(loan.installment, loan.remaining);
+            const input = prompt(`Enter amount ${isReceivable ? 'received' : 'paid'} for "${loan.name}"\nRemaining balance: ${formatPHP(loan.remaining)}`, suggested);
+            if(input === null) return;
+            const amt = r2(parseFloat(input));
+            if(!(amt > 0)) { alert("Please enter a valid amount."); return; }
+            if(amt > loan.remaining + 0.004) {
+                alert(`Amount is more than the remaining balance (${formatPHP(loan.remaining)}).`);
+                return;
+            }
+
+            loan.remaining = r2(Math.max(0, loan.remaining - amt));
+            data.transactions.unshift({
+                id: Date.now(),
+                title: `${isReceivable ? 'Received' : 'Payment'}: ${loan.name}`,
+                amount: amt,
+                category: 'LOAN',
+                type: isReceivable ? 'INCOME - LOAN' : 'EXPENSE - LOAN',
+                date: todayStr(),
+                loanPayment: true,
+                loanId: loan.id
+            });
+
+            if(loan.remaining <= 0.004) {
+                loan.remaining = 0;
+                removeAllLoanForecasts(loan); // loan is 0 -> delete all its forecasts
+            } else {
+                // apply the payment to the earliest pending forecasts first
+                let left = amt;
+                for(const f of pendingLoanForecasts(loan)) {
+                    if(left <= 0.004) break;
+                    if(f.amount <= left + 0.004) {
+                        left = r2(left - f.amount);
+                        data.forecasts = data.forecasts.filter(x => x !== f);
+                    } else {
+                        f.amount = r2(f.amount - left);
+                        left = 0;
+                    }
+                }
+                reconcileLoanForecasts(loan);
+            }
+            saveData();
+        }
+        function deleteLoan(id) {
+            const loan = data.loans.find(l => l.id === id);
+            if(loan) removeAllLoanForecasts(loan);
+            data.loans = data.loans.filter(l => l.id !== id);
+            saveData();
+        }
 
         // Forecast
         function addForecast() {
@@ -625,7 +721,7 @@
             const category = document.getElementById('fCategorySelect').value;
             const title = document.getElementById('fTitle').value;
             const amount = parseFloat(document.getElementById('fAmount').value);
-            const date = document.getElementById('fDate').value || new Date().toISOString().split('T')[0];
+            const date = document.getElementById('fDate').value || todayStr();
             if(title && amount > 0) {
                 data.forecasts.push({id: Date.now(), status: 'FORECASTED', type: fType, category, title, amount, date});
                 closeModal('forecastModal');
@@ -635,36 +731,51 @@
 
         function updateForecastStatus(id, newStatus) {
             const f = data.forecasts.find(x => x.id === id);
-            if(f) {
-                const oldStatus = f.status;
-                f.status = newStatus;
+            if(!f) return;
 
-                if(newStatus === 'PAID' && oldStatus !== 'PAID') {
-                    const txnType = f.type === 'INCOME' ? `INCOME - ${f.category}` : `EXPENSE - ${f.category}`;
-                    data.transactions.unshift({
-                        id: Date.now(), 
-                        title: `Forecast: ${f.title}`, 
-                        amount: f.amount, 
-                        category: f.category, 
-                        type: txnType, 
-                        date: f.date
-                    });
-                    if(f.type === 'EXPENSE' && f.category === 'LOAN') {
-                        const loan = data.loans.find(l => l.name.toLowerCase() === f.title.toLowerCase());
-                        if(loan) {
-                            loan.remaining = Math.max(0, loan.remaining - f.amount);
-                        }
+            if(newStatus === 'PAID') {
+                const loan = f.category === 'LOAN' ? data.loans.find(l => loanMatches(f, l)) : null;
+                let amount = f.amount;
+                if(loan) amount = Math.min(f.amount, loan.remaining);
+                const txnType = f.type === 'INCOME' ? `INCOME - ${f.category}` : `EXPENSE - ${f.category}`;
+                const txn = {
+                    id: Date.now(),
+                    title: `Forecast: ${f.title}`,
+                    amount,
+                    category: f.category,
+                    type: txnType,
+                    date: todayStr()
+                };
+                if(loan) { txn.loanPayment = true; txn.loanId = loan.id; }
+                data.transactions.unshift(txn);
+
+                // PAID forecasts are removed from the Forecast page
+                data.forecasts = data.forecasts.filter(x => x.id !== id);
+
+                if(loan) {
+                    loan.remaining = r2(Math.max(0, loan.remaining - amount));
+                    if(loan.remaining <= 0.004) {
+                        loan.remaining = 0;
+                        removeAllLoanForecasts(loan);
+                    } else if(amount < f.amount) {
+                        reconcileLoanForecasts(loan);
                     }
                 }
-                saveData();
+            } else {
+                f.status = newStatus;
             }
+            saveData();
         }
 
         function updateForecastAmount(id, newAmount) {
             const amt = parseFloat(newAmount);
             const f = data.forecasts.find(x => x.id === id);
             if(f && !isNaN(amt) && amt >= 0) {
-                f.amount = amt;
+                f.amount = r2(amt);
+                if(f.category === 'LOAN' && f.status === 'FORECASTED') {
+                    const loan = data.loans.find(l => loanMatches(f, l));
+                    if(loan) reconcileLoanForecasts(loan, f.id); // keep forecasts tallied with the loan
+                }
                 saveData();
             }
         }
@@ -688,18 +799,6 @@
             }
         }
 
-        function sendFeedback() {
-            const email = document.getElementById('feedbackEmail').value.trim();
-            const message = document.getElementById('feedbackMessage').value.trim();
-            if(!email || !message) {
-                alert("Please enter your email address and message before sending.");
-                return;
-            }
-            const subject = encodeURIComponent("Budget Tracker Suggestion / Error Report from " + email);
-            const body = encodeURIComponent(`User Email: ${email}\n\nMessage:\n${message}`);
-            window.location.href = `mailto:kristine.aquino2019@gmail.com?subject=${subject}&body=${body}`;
-        }
-
         function backupData() {
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(data));
             const downloadAnchor = document.createElement('a');
@@ -719,6 +818,11 @@
                     const importedData = JSON.parse(e.target.result);
                     if(importedData && importedData.transactions) {
                         data = importedData;
+                        data.transactions = data.transactions || []; data.savings = data.savings || [];
+                        data.loans = data.loans || []; data.forecasts = data.forecasts || [];
+                        data.categories = data.categories || ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS'];
+                        data.tallyMigrated = false;
+                        migrateTally();
                         saveData();
                         applyAppTitle();
                         alert("Data successfully restored from backup file!");
@@ -883,8 +987,8 @@
                     <td class="p-2 text-green-600">${formatPHP(s.deposit)}</td>
                     <td class="p-2">${s.interest}%</td>
                     <td class="p-2 text-center space-x-1">
-                        <button onclick="depositSavings(${s.id})" class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px]">Dep</button>
-                        <button onclick="withdrawSavings(${s.id})" class="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px]">W/D</button>
+                        <button onclick="depositSavings(${s.id})" class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px]">Deposit</button>
+                        <button onclick="withdrawSavings(${s.id})" class="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded text-[10px]">Withdraw</button>
                         <button onclick="deleteSavings(${s.id})" class="text-red-500"><i class="fas fa-trash"></i></button>
                     </td>
                 </tr>
@@ -906,36 +1010,37 @@
                     <td class="p-2 font-medium">${l.name}</td>
                     <td class="p-2">${formatPHP(l.principal)}</td>
                     <td class="p-2">${formatPHP(l.installment)}</td>
-                    <td class="p-2 font-bold text-red-600">${formatPHP(l.remaining)}</td>
+                    <td class="p-2">
+                        <div class="font-bold ${l.remaining > 0 ? 'text-red-600' : 'text-green-600'}">${formatPHP(l.remaining)}</div>
+                        ${l.remaining > 0 ? (() => { const ft = loanForecastTotal(l); const ok = Math.abs(ft - l.remaining) < 0.005; return `<div class="text-[10px] ${ok ? 'text-green-600' : 'text-amber-600'}">Forecast: ${formatPHP(ft)} ${ok ? '✓' : '≠'}</div>`; })() : '<div class="text-[10px] text-green-600">Fully paid ✓</div>'}
+                    </td>
                     <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] ${l.type === 'PAYABLE' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}">${l.type}</span></td>
+                    <td class="p-2 text-center">${l.remaining > 0 ? `<button onclick="payLoan(${l.id})" class="bg-indigo-600 text-white px-2 py-0.5 rounded text-[10px] font-semibold hover:bg-indigo-700">${l.type === 'RECEIVABLE' ? 'Receive' : 'Pay'}</button>` : '<span class="text-[10px] text-green-600 font-semibold">Paid</span>'}</td>
                     <td class="p-2">${l.months} mos</td>
                     <td class="p-2">${l.freq}</td>
                     <td class="p-2">${l.startDate || '-'}</td>
                     <td class="p-2 text-[10px]">${l.dueDates}</td>
                     <td class="p-2 text-center"><button onclick="deleteLoan(${l.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button></td>
                 </tr>
-            `).join('') || '<tr><td colspan="10" class="p-3 text-center text-gray-400">No active loans recorded.</td></tr>';
+            `).join('') || '<tr><td colspan="11" class="p-3 text-center text-gray-400">No active loans recorded.</td></tr>';
 
             // Loan Payment History Table
-            const loanPayments = data.transactions.filter(t => t.category === 'LOAN' && t.type.startsWith('EXPENSE'));
+            const loanPayments = data.transactions.filter(t => t.category === 'LOAN' && (t.loanPayment || t.type.startsWith('EXPENSE')));
             document.getElementById('loanPaymentHistoryTable').innerHTML = loanPayments.map(lp => `
                 <tr class="border-b">
                     <td class="p-2 text-gray-600">${lp.date}</td>
                     <td class="p-2 font-medium">${lp.title}</td>
-                    <td class="p-2 text-right font-bold text-red-600">-${formatPHP(lp.amount)}</td>
+                    <td class="p-2 text-right font-bold ${lp.type.startsWith('INCOME') ? 'text-green-600' : 'text-red-600'}">${lp.type.startsWith('INCOME') ? '+' : '-'}${formatPHP(lp.amount)}</td>
                 </tr>
             `).join('') || '<tr><td colspan="3" class="py-3 text-center text-gray-400">No loan payments recorded yet.</td></tr>';
 
             // Forecasts Separated by Month and Semi-Month Periods
             const fMonth = document.getElementById('filterMonth').value;
             const fYear = document.getElementById('filterYear').value;
-            let filteredForecasts = [...data.forecasts];
-            
-            if(fMonth !== 'ALL') {
-                filteredForecasts = filteredForecasts.filter(f => f.date && f.date.startsWith(`${fYear}-${fMonth}`));
-            } else {
-                filteredForecasts = filteredForecasts.filter(f => f.date && f.date.startsWith(`${fYear}`));
-            }
+            const todayISO = todayStr();
+            const inPeriod = f => f.date && (fMonth !== 'ALL' ? f.date.startsWith(`${fYear}-${fMonth}`) : f.date.startsWith(`${fYear}`));
+            // Still-FORECASTED items always stay visible, even if their date has already passed
+            let filteredForecasts = data.forecasts.filter(f => inPeriod(f) || (f.status === 'FORECASTED' && f.date && f.date < todayISO));
 
             filteredForecasts.sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -1013,7 +1118,7 @@
                                 <td class="p-2">
                                     <input type="date" value="${f.date}" onchange="updateForecastDate(${f.id}, this.value)" class="border p-1 rounded text-xs">
                                 </td>
-                                <td class="p-2 font-medium">${f.title}</td>
+                                <td class="p-2 font-medium">${f.title}${f.status === 'FORECASTED' && f.date < todayISO ? ' <span class="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-red-100 text-red-700 font-semibold">OVERDUE</span>' : ''}</td>
                                 <td class="p-2">
                                     <input type="number" value="${f.amount}" onchange="updateForecastAmount(${f.id}, this.value)" class="border p-1 rounded w-24 text-xs font-bold text-gray-800">
                                 </td>
@@ -1039,6 +1144,7 @@
             updateCharts();
         }
 
+        migrateTally();
         renderAll();
     </script>
 </body>
