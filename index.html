@@ -388,6 +388,18 @@
         </div>
     </div>
 
+    <!-- Built-in dialog (replaces prompt/alert/confirm, which some viewers block) -->
+    <div id="uiDialog" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center p-4" style="z-index:100">
+        <div class="bg-white p-6 rounded-xl w-full max-w-sm space-y-3">
+            <p id="uiDialogMessage" class="text-sm text-gray-800" style="white-space:pre-line"></p>
+            <input type="number" step="any" inputmode="decimal" id="uiDialogInput" class="w-full border p-2 rounded hidden" onkeydown="if(event.key==='Enter'){uiDialogClose(true)}">
+            <div class="flex justify-end space-x-2">
+                <button id="uiDialogCancel" onclick="uiDialogClose(false)" class="px-4 py-2 text-gray-600">Cancel</button>
+                <button onclick="uiDialogClose(true)" class="bg-indigo-600 text-white px-4 py-2 rounded">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Script Application Logic -->
     <script>
         let data = JSON.parse(localStorage.getItem('budgetAppV19')) || {
@@ -429,27 +441,62 @@
         function removeAllLoanForecasts(loan) {
             data.forecasts = data.forecasts.filter(f => !loanMatches(f, loan));
         }
-        // Make the total of pending forecasts equal the loan's remaining balance
-        function reconcileLoanForecasts(loan, lockId) {
+        // Due days of a loan, e.g. [5] for monthly or [15, 30] for semi-monthly
+        function loanDueDays(loan) {
+            const nums = ((loan.dueDates || '').match(/\d+/g) || []).map(Number);
+            if(loan.freq === 'SEMIMONTHLY') return nums.length >= 2 ? nums.slice(0, 2) : [15, 30];
+            return nums.length ? [nums[0]] : [parseLocalDate(loan.startDate || todayStr()).getDate()];
+        }
+        // Next installment date strictly after the given date (YYYY-MM-DD)
+        function nextLoanDueDate(loan, afterISO) {
+            const after = parseLocalDate(afterISO);
+            const days = loanDueDays(loan).slice().sort((a, b) => a - b);
+            for(let off = 0; off < 3; off++) {
+                for(const d of days) {
+                    const c = dueDateFor(after.getFullYear(), after.getMonth() + off, d);
+                    if(c > after) return localISO(c);
+                }
+            }
+            return localISO(dueDateFor(after.getFullYear(), after.getMonth() + 1, days[0]));
+        }
+        let forecastIdSeq = 0;
+        function newForecastId() { return Date.now() * 10 + (forecastIdSeq++ % 10); }
+
+        // Make the total of pending forecasts equal the loan's remaining balance.
+        // No forecast is ever filled above the installment: extra balance goes into new installment dates.
+        // normalize=true also caps any existing forecast that is above the installment.
+        function reconcileLoanForecasts(loan, lockId, normalize) {
             if (loan.remaining <= 0.004) { removeAllLoanForecasts(loan); return; }
-            const pend = pendingLoanForecasts(loan);
-            const total = r2(pend.reduce((a, f) => a + f.amount, 0));
-            const diff = r2(loan.remaining - total);
-            if (Math.abs(diff) < 0.005) return;
-            const others = pend.filter(f => f.id !== lockId);
+            const inst = loan.installment;
             const fType = loan.type === 'RECEIVABLE' ? 'INCOME' : 'EXPENSE';
 
+            if (normalize) {
+                pendingLoanForecasts(loan).forEach(f => {
+                    if (f.id !== lockId && f.amount > inst + 0.004) f.amount = r2(inst);
+                });
+            }
+
+            const pend = pendingLoanForecasts(loan);
+            const total = r2(pend.reduce((a, f) => a + f.amount, 0));
+            let diff = r2(loan.remaining - total);
+            if (Math.abs(diff) < 0.005) return;
+            const others = pend.filter(f => f.id !== lockId);
+
             if (diff > 0) {
-                if (others.length) {
-                    others[others.length - 1].amount = r2(others[others.length - 1].amount + diff);
-                } else {
-                    let date = todayStr();
-                    const locked = pend[0];
-                    if (locked) {
-                        const ld = parseLocalDate(locked.date);
-                        date = localISO(dueDateFor(ld.getFullYear(), ld.getMonth() + 1, ld.getDate()));
-                    }
-                    data.forecasts.push({ id: Date.now() + Math.floor(Math.random() * 1000), loanId: loan.id, status: 'FORECASTED', type: fType, category: 'LOAN', title: loan.name, amount: diff, date });
+                // 1) top up the last forecast, but only up to the installment amount
+                const tail = others.length ? others[others.length - 1] : null;
+                if (tail && tail.amount < inst - 0.004) {
+                    const add = Math.min(diff, r2(inst - tail.amount));
+                    tail.amount = r2(tail.amount + add);
+                    diff = r2(diff - add);
+                }
+                // 2) the rest goes into new installment dates
+                let lastDate = pend.length ? pend[pend.length - 1].date : localISO(new Date(Date.now() - 86400000));
+                while (diff > 0.004) {
+                    const amt = Math.min(inst, diff);
+                    lastDate = nextLoanDueDate(loan, lastDate);
+                    data.forecasts.push({ id: newForecastId(), loanId: loan.id, status: 'FORECASTED', type: fType, category: 'LOAN', title: loan.name, amount: r2(amt), date: lastDate });
+                    diff = r2(diff - amt);
                 }
             } else {
                 let excess = -diff;
@@ -465,12 +512,44 @@
         }
         // One-time cleanup: drop PAID forecasts and tally loans with their forecasts
         function migrateTally() {
-            if (data.tallyMigrated) return;
+            if (data.tallyMigrated && data.capMigrated) return;
             data.forecasts = (data.forecasts || []).filter(f => f.status !== 'PAID');
-            (data.loans || []).forEach(l => reconcileLoanForecasts(l));
+            (data.loans || []).forEach(l => {
+                const overInstallment = pendingLoanForecasts(l).some(f => f.amount > l.installment + 0.004);
+                if (!data.tallyMigrated || overInstallment) reconcileLoanForecasts(l, undefined, true);
+            });
             data.tallyMigrated = true;
+            data.capMigrated = true;
             localStorage.setItem('budgetAppV19', JSON.stringify(data));
         }
+
+// ---------- Built-in dialogs (prompt/alert/confirm are blocked in some viewers) ----------
+        let uiDlgResolve = null, uiDlgInput = false;
+        function uiDialogOpen(message, { input = false, defaultValue = '', showCancel = true } = {}) {
+            return new Promise(resolve => {
+                if(uiDlgResolve) { const prev = uiDlgResolve; uiDlgResolve = null; prev(uiDlgInput ? null : false); }
+                uiDlgResolve = resolve; uiDlgInput = input;
+                document.getElementById('uiDialogMessage').innerText = message;
+                const inp = document.getElementById('uiDialogInput');
+                inp.value = (defaultValue === undefined || defaultValue === null) ? '' : defaultValue;
+                inp.classList.toggle('hidden', !input);
+                document.getElementById('uiDialogCancel').classList.toggle('hidden', !showCancel);
+                const dlg = document.getElementById('uiDialog');
+                dlg.classList.remove('hidden'); dlg.classList.add('flex');
+                if(input) setTimeout(() => { inp.focus(); inp.select(); }, 30);
+            });
+        }
+        function uiDialogClose(ok) {
+            const dlg = document.getElementById('uiDialog');
+            dlg.classList.add('hidden'); dlg.classList.remove('flex');
+            const r = uiDlgResolve; uiDlgResolve = null;
+            if(!r) return;
+            if(uiDlgInput) r(ok ? document.getElementById('uiDialogInput').value : null);
+            else r(!!ok);
+        }
+        function askInput(message, defaultValue) { return uiDialogOpen(message, { input: true, defaultValue }); }
+        function askConfirm(message) { return uiDialogOpen(message); }
+        window.alert = function(message) { uiDialogOpen(String(message), { showCancel: false }); };
 
         function saveData() {
             localStorage.setItem('budgetAppV19', JSON.stringify(data));
@@ -497,8 +576,8 @@
             }
         }
 
-        function clearAllData() {
-            if(confirm("Are you sure you want to clear all your budget data? This action cannot be undone.")) {
+        async function clearAllData() {
+            if(await askConfirm("Are you sure you want to clear all your budget data? This action cannot be undone.")) {
                 data = { appTitle: data.appTitle || "PHP Budget Tracker", transactions: [], savings: [], loans: [], forecasts: [], categories: ['GENERAL', 'FOOD', 'UTILITIES', 'SALARY', 'LOAN', 'SAVINGS'] };
                 saveData();
                 alert("All data has been cleared.");
@@ -584,8 +663,8 @@
                 saveData();
             }
         }
-        function depositSavings(id) {
-            const amtStr = prompt("Enter deposit amount in PHP:");
+        async function depositSavings(id) {
+            const amtStr = await askInput("Enter deposit amount in PHP:");
             const amt = parseFloat(amtStr);
             const sav = data.savings.find(s => s.id === id);
             if(sav && amt > 0) {
@@ -595,8 +674,8 @@
                 saveData();
             }
         }
-        function withdrawSavings(id) {
-            const amtStr = prompt("Enter withdrawal amount in PHP:");
+        async function withdrawSavings(id) {
+            const amtStr = await askInput("Enter withdrawal amount in PHP:");
             const amt = parseFloat(amtStr);
             const sav = data.savings.find(s => s.id === id);
             if(sav && amt > 0 && amt <= sav.balance) {
@@ -609,10 +688,10 @@
             }
         }
         // Add interest earned to a savings account (raises Running Bal and logs in Savings History)
-        function addSavingsInterest(id) {
+        async function addSavingsInterest(id) {
             const sav = data.savings.find(s => s.id === id);
             if(!sav) return;
-            const input = prompt(`Enter the interest amount to add to "${sav.name}"\nCurrent running balance: ${formatPHP(sav.balance)}`);
+            const input = await askInput(`Enter the interest amount to add to "${sav.name}"\nCurrent running balance: ${formatPHP(sav.balance)}`);
             if(input === null) return;
             const amt = r2(parseFloat(input));
             if(!(amt > 0)) { alert("Please enter a valid interest amount."); return; }
@@ -665,7 +744,7 @@
 
                 const loan = {id: loanId, name, principal, remaining: principal, installment, type, months, freq, startDate: startDateStr, dueDates: dueDatesStr};
                 data.loans.push(loan);
-                reconcileLoanForecasts(loan); // forecasts now add up to the loan amount
+                reconcileLoanForecasts(loan, undefined, true); // forecasts now add up to the loan amount
                 closeModal('loanModal');
                 saveData();
             } else {
@@ -674,13 +753,13 @@
         }
 
         // Pay (or receive) any amount on a loan
-        function payLoan(id) {
+        async function payLoan(id) {
             const loan = data.loans.find(l => l.id === id);
             if(!loan) return;
             if(loan.remaining <= 0.004) { alert("This loan is already fully paid."); return; }
             const isReceivable = loan.type === 'RECEIVABLE';
             const suggested = Math.min(loan.installment, loan.remaining);
-            const input = prompt(`Enter amount ${isReceivable ? 'received' : 'paid'} for "${loan.name}"\nRemaining balance: ${formatPHP(loan.remaining)}`, suggested);
+            const input = await askInput(`Enter amount ${isReceivable ? 'received' : 'paid'} for "${loan.name}"\nRemaining balance: ${formatPHP(loan.remaining)}`, suggested);
             if(input === null) return;
             const amt = r2(parseFloat(input));
             if(!(amt > 0)) { alert("Please enter a valid amount."); return; }
@@ -722,33 +801,19 @@
             saveData();
         }
         // Add interest to a loan: raises Remaining, adds a forecast, and logs it in Loan History
-        function addLoanInterest(id) {
+        async function addLoanInterest(id) {
             const loan = data.loans.find(l => l.id === id);
             if(!loan) return;
-            const input = prompt(`Enter the interest amount to add to "${loan.name}"\nCurrent remaining: ${formatPHP(loan.remaining)}`);
+            const input = await askInput(`Enter the interest amount to add to "${loan.name}"\nCurrent remaining: ${formatPHP(loan.remaining)}`);
             if(input === null) return;
             const amt = r2(parseFloat(input));
             if(!(amt > 0)) { alert("Please enter a valid interest amount."); return; }
 
-            // forecast date: next pending due date (today or later), otherwise today
-            const today = todayStr();
-            const next = pendingLoanForecasts(loan).find(f => f.date >= today);
-            const date = next ? next.date : today;
-
             loan.remaining = r2(loan.remaining + amt);
-            data.forecasts.push({
-                id: Date.now() + Math.floor(Math.random() * 1000),
-                loanId: loan.id,
-                status: 'FORECASTED',
-                type: loan.type === 'RECEIVABLE' ? 'INCOME' : 'EXPENSE',
-                category: 'LOAN',
-                title: `${loan.name} (Interest)`,
-                amount: amt,
-                date
-            });
             if(!data.loanInterests) data.loanInterests = [];
-            data.loanInterests.unshift({ id: Date.now(), loanId: loan.id, title: `Interest: ${loan.name}`, amount: amt, date: today });
-            reconcileLoanForecasts(loan);
+            data.loanInterests.unshift({ id: Date.now(), loanId: loan.id, title: `Interest: ${loan.name}`, amount: amt, date: todayStr() });
+            // adds the interest on top of the last forecasted amount (new forecast only if none is pending)
+            reconcileLoanForecasts(loan, undefined, true);
             saveData();
         }
 
